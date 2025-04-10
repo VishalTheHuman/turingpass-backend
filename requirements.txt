@@ -4,3 +4,4 @@ scipy
 tensorflow
 scikit-learn
 gunicorn
+pillow
