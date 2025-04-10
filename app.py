@@ -1,3 +1,4 @@
+```
 from flask import Flask, request, jsonify
 import numpy as np
 import ast
@@ -63,28 +64,58 @@ def decode_predictions(preds):
         output_text.append(char)
     return tf.strings.reduce_join(output_text).numpy().decode("utf-8")
 
+# Define mouse jitter computation
+def compute_mouse_jitter(movement_str):
+    try:
+        points = ast.literal_eval(movement_str)
+        distances = [euclidean(p1.values(), p2.values()) for p1, p2 in zip(points[:-1], points[1:])]
+        return np.std(distances) if distances else 0
+    except Exception:
+        return 0
+
 @app.route('/is-bot', methods=['POST'])
 def predict():
     data = request.get_json()
+
+    # Compute mouse jitter
     jitter = compute_mouse_jitter(data['mouse_movements'])
 
+    # Compute engineered features
+    key_presses = data.get('key_presses', 1)
+    mouse_points = data.get('mouse_points', 1)
+    attempts = data.get('attempts', 1)
+
+    avg_key_interval = data['time_taken'] / key_presses if key_presses != 0 else 0
+    mouse_density = data['mouse_distance'] / mouse_points if mouse_points != 0 else 0
+    time_per_attempt = data['time_taken'] / attempts if attempts != 0 else 0
+    time_per_key = data['time_taken'] / key_presses if key_presses != 0 else 0
+
+    # Create feature vector
     features = [
         data['time_taken'],
-        data['is_correct'],
-        data['attempts'],
         data['key_presses'],
-        data['backspace_presses'],
+        data['mouse_distance'],
+        data['mouse_points'],
+        data['attempts'],
+        avg_key_interval,
+        mouse_density,
+        time_per_attempt,
+        time_per_key,
         jitter
     ]
 
+    # Scale and reshape
     X_scaled = scaler.transform([features])
     X_reshaped = X_scaled.reshape((1, 1, len(features)))
-    reconstruction = model.predict(X_reshaped)
+
+    # Get reconstruction
+    reconstruction = model.predict(X_reshaped, verbose=0)
     mse = np.mean(np.square(X_reshaped - reconstruction))
-    threshold = np.percentile([mse], 95)
+
+    threshold = 0.01 
     prediction = 1 if mse > threshold else 0
 
-    return jsonify({"prediction": "bot" if prediction == 1 else "human"})
+    return jsonify({"prediction": "bot" if prediction == 1 else "human", "mse": mse})
 
 @app.route('/predict', methods=['POST'])
 def predict_captcha():
@@ -102,10 +133,9 @@ def predict_captcha():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/')
 def home():
     return 'CAPTCHA Solver Detection'
-    
+ 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
